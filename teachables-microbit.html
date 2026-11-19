@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teachable Machine to micro:bit</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--ink:#14181f;--mute:#6b7380;--line:#e3e6eb;--acc:#1f6feb;--ok:#1a8f4c;--bad:#c0392b;--bar:#e9edf3}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1318;--card:#171c23;--ink:#e8ecf2;--mute:#8d97a6;--line:#262d37;--acc:#5b9dff;--ok:#3ecf7c;--bad:#ff6b5c;--bar:#222a34}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 18px 48px}
+h1{font-size:22px;margin:0 0 4px;font-weight:650}
+p.sub{margin:0 0 22px;color:var(--mute)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:720px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h2{font-size:14px;margin:0 0 12px;font-weight:650}
+label{display:block;font-size:13px;color:var(--mute);margin-bottom:6px}
+input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+input[type=text]:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+button{padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button:disabled{opacity:.5;cursor:not-allowed}
+.status{font-size:13px;color:var(--mute);margin-top:10px;min-height:20px}
+.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}
+#webcam-container{display:flex;justify-content:center;min-height:120px;align-items:center;color:var(--mute);background:var(--bg);border-radius:8px;overflow:hidden}
+#webcam-container canvas{max-width:100%;height:auto;display:block}
+.pred{margin:8px 0}
+.pred .top{display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px}
+.pred .bar{height:8px;background:var(--bar);border-radius:99px;overflow:hidden}
+.pred .fill{height:100%;width:0;background:var(--acc);border-radius:99px}
+.pred.win .fill{background:var(--ok)}
+.pred.win .name{font-weight:650}
+input[type=range]{width:100%;accent-color:var(--acc)}
+.log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--mute);background:var(--bg);border-radius:8px;padding:10px;height:96px;overflow:auto;white-space:pre-wrap;margin-top:12px}
+details{margin-top:16px}
+summary{cursor:pointer;color:var(--mute);font-size:13px}
+pre{background:var(--bg);border-radius:8px;padding:12px;overflow:auto;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;margin:10px 0 0}
+.full{grid-column:1/-1}
+</style>
+</head>
+<body>
+<main>
+  <h1>Teachable Machine to micro:bit</h1>
+  <p class="sub">Load an image model, read your webcam, and send the detected class to a MakeCode micro:bit.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2>1. Model</h2>
+      <label for="url">Teachable Machine model link</label>
+      <input id="url" type="text" value="https://teachablemachine.withgoogle.com/models/gYlnM1drZ/" spellcheck="false">
+      <div class="row">
+        <button class="primary" id="start">Load model and start webcam</button>
+        <button id="stop" disabled>Stop</button>
+      </div>
+      <div class="status" id="modelStatus"></div>
+    </section>
+
+    <section class="card">
+      <h2>2. micro:bit</h2>
+      <div class="row" style="margin-top:0">
+        <button id="usb">Connect by USB</button>
+        <button id="ble">Connect by Bluetooth</button>
+        <button id="disc" disabled>Disconnect</button>
+      </div>
+      <div class="status" id="mbStatus">Not connected</div>
+      <div style="margin-top:14px">
+        <label for="thr">Send when confidence is at least <b id="thrVal">90</b>%</label>
+        <input id="thr" type="range" min="50" max="100" value="90">
+      </div>
+      <div class="row">
+        <label style="margin:0;display:flex;gap:8px;align-items:center;color:var(--ink)">
+          <input type="checkbox" id="onlyChange" checked> Send only when the class changes
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Webcam</h2>
+      <div id="webcam-container">Webcam appears here</div>
+    </section>
+
+    <section class="card">
+      <h2>Predictions</h2>
+      <div id="label-container"><span style="color:var(--mute)">Waiting for the model</span></div>
+      <div class="log" id="log"></div>
+    </section>
+
+    <section class="card full">
+      <h2>MakeCode</h2>
+      <p style="margin:0;color:var(--mute)">The page sends the class name followed by a new line, for example <code>Class 1</code>. Match your own class names in the code below.</p>
+      <details open>
+        <summary>USB: MakeCode JavaScript</summary>
+        <pre id="codeUsb">let cmd = ""
+serial.setBaudRate(BaudRate.BaudRate115200)
+serial.onDataReceived(serial.delimiters(Delimiters.NewLine), function () {
+    cmd = serial.readLine().trim()
+    if (cmd == "Class 1") {
+        basic.showIcon(IconNames.Happy)
+    } else if (cmd == "Class 2") {
+        basic.showIcon(IconNames.Sad)
+    } else {
+        basic.clearScreen()
+    }
+})</pre>
+      </details>
+      <details>
+        <summary>Bluetooth: MakeCode JavaScript (add the Bluetooth extension, turn off "No Pairing Required")</summary>
+        <pre id="codeBle">bluetooth.startUartService()
+bluetooth.onUartDataReceived(serial.delimiters(Delimiters.NewLine), function () {
+    let cmd = bluetooth.uartReadUntil(serial.delimiters(Delimiters.NewLine)).trim()
+    if (cmd == "Class 1") {
+        basic.showIcon(IconNames.Happy)
+    } else if (cmd == "Class 2") {
+        basic.showIcon(IconNames.Sad)
+    } else {
+        basic.clearScreen()
+    }
+})</pre>
+      </details>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let model, webcam, maxPredictions, running = false, rows = [];
+let lastSent = null;
+
+// micro:bit link state
+let link = null; // { type, send(text), close() }
+const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+
+function log(msg){
+  const el = $("log");
+  el.textContent += msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(id, text, cls){
+  const el = $(id);
+  el.textContent = text;
+  el.className = "status" + (cls ? " " + cls : "");
+}
+
+/* ---------- Model and webcam ---------- */
+async function start(){
+  let base = $("url").value.trim();
+  if(!base){ setStatus("modelStatus","Paste your model link first.","bad"); return; }
+  if(!base.endsWith("/")) base += "/";
+  $("start").disabled = true;
+  setStatus("modelStatus","Loading model...");
+  try{
+    model = await tmImage.load(base + "model.json", base + "metadata.json");
+    maxPredictions = model.getTotalClasses();
+    setStatus("modelStatus","Model loaded. Starting webcam...");
+    if(webcam){ try{ webcam.stop(); }catch(e){} }
+    webcam = new tmImage.Webcam(300, 300, true);
+    await webcam.setup();
+    await webcam.play();
+    const wc = $("webcam-container");
+    wc.innerHTML = "";
+    wc.appendChild(webcam.canvas);
+
+    const lc = $("label-container");
+    lc.innerHTML = "";
+    rows = [];
+    const labels = model.getClassLabels();
+    for(let i = 0; i < maxPredictions; i++){
+      const d = document.createElement("div");
+      d.className = "pred";
+      d.innerHTML = '<div class="top"><span class="name"></span><span class="pct">0%</span></div><div class="bar"><div class="fill"></div></div>';
+      d.querySelector(".name").textContent = labels[i];
+      lc.appendChild(d);
+      rows.push(d);
+    }
+    running = true;
+    lastSent = null;
+    $("stop").disabled = false;
+    setStatus("modelStatus","Running","ok");
+    window.requestAnimationFrame(loop);
+  }catch(err){
+    console.error(err);
+    setStatus("modelStatus","Could not start: " + (err.message || err) + ". Check the model link and webcam permission.","bad");
+    $("start").disabled = false;
+  }
+}
+
+function stop(){
+  running = false;
+  if(webcam){ try{ webcam.stop(); }catch(e){} }
+  $("stop").disabled = true;
+  $("start").disabled = false;
+  setStatus("modelStatus","Stopped");
+}
+
+async function loop(){
+  if(!running) return;
+  webcam.update();
+  await predict();
+  window.requestAnimationFrame(loop);
+}
+
+async function predict(){
+  const prediction = await model.predict(webcam.canvas);
+  let best = 0;
+  for(let i = 0; i < maxPredictions; i++){
+    if(prediction[i].probability > prediction[best].probability) best = i;
+  }
+  for(let i = 0; i < maxPredictions; i++){
+    const p = prediction[i].probability;
+    const r = rows[i];
+    r.querySelector(".pct").textContent = Math.round(p * 100) + "%";
+    r.querySelector(".fill").style.width = (p * 100).toFixed(0) + "%";
+    r.classList.toggle("win", i === best);
+  }
+  maybeSend(prediction[best].className, prediction[best].probability);
+}
+
+function maybeSend(label, prob){
+  const thr = Number($("thr").value) / 100;
+  if(prob < thr || !link) return;
+  if($("onlyChange").checked && label === lastSent) return;
+  lastSent = label;
+  link.send(label + "\n").then(() => log("sent: " + label)).catch(e => log("send failed: " + e.message));
+}
+
+/* ---------- micro:bit over USB (Web Serial) ---------- */
+async function connectUsb(){
+  if(!("serial" in navigator)){ setStatus("mbStatus","Web Serial is not supported. Use Chrome or Edge.","bad"); return; }
+  try{
+    const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x0d28 }] });
+    await port.open({ baudRate: 115200 });
+    const writer = port.writable.getWriter();
+    const enc = new TextEncoder();
+    link = {
+      type: "USB",
+      send: t => writer.write(enc.encode(t)),
+      close: async () => { try{ writer.releaseLock(); await port.close(); }catch(e){} }
+    };
+    onConnected("USB");
+  }catch(err){
+    setStatus("mbStatus", err.name === "NotFoundError" ? "No device selected" : "USB failed: " + err.message + ". Close any MakeCode serial or WebUSB tab and try again.", "bad");
+  }
+}
+
+/* ---------- micro:bit over Bluetooth (Nordic UART) ---------- */
+async function connectBle(){
+  if(!navigator.bluetooth){ setStatus("mbStatus","Web Bluetooth is not supported. Use Chrome or Edge.","bad"); return; }
+  try{
+    const dev = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: "BBC micro:bit" }],
+      optionalServices: [NUS]
+    });
+    const server = await dev.gatt.connect();
+    const svc = await server.getPrimaryService(NUS);
+    const rx = await svc.getCharacteristic(NUS_RX);
+    const enc = new TextEncoder();
+    link = {
+      type: "Bluetooth",
+      send: async t => {
+        const bytes = enc.encode(t);
+        for(let i = 0; i < bytes.length; i += 20){
+          await rx.writeValueWithoutResponse(bytes.slice(i, i + 20));
+        }
+      },
+      close: async () => { try{ dev.gatt.disconnect(); }catch(e){} }
+    };
+    dev.addEventListener("gattserverdisconnected", () => {
+      if(link){ link = null; offline("Bluetooth connection lost"); }
+    });
+    onConnected("Bluetooth");
+  }catch(err){
+    setStatus("mbStatus", err.name === "NotFoundError" ? "No device selected" : "Bluetooth failed: " + err.message + ". Pair the micro:bit and run the Bluetooth MakeCode program first.", "bad");
+  }
+}
+
+function onConnected(kind){
+  setStatus("mbStatus","Connected by " + kind,"ok");
+  $("usb").disabled = $("ble").disabled = true;
+  $("disc").disabled = false;
+  lastSent = null;
+  log("connected: " + kind);
+}
+function offline(msg){
+  setStatus("mbStatus", msg || "Not connected", msg ? "bad" : "");
+  $("usb").disabled = $("ble").disabled = false;
+  $("disc").disabled = true;
+}
+async function disconnect(){
+  if(link){ const l = link; link = null; await l.close(); }
+  offline("Not connected");
+  log("disconnected");
+}
+
+$("start").onclick = start;
+$("stop").onclick = stop;
+$("usb").onclick = connectUsb;
+$("ble").onclick = connectBle;
+$("disc").onclick = disconnect;
+$("thr").oninput = e => { $("thrVal").textContent = e.target.value; };
+</script>
+</body>
+</html>
